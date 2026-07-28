@@ -11,11 +11,16 @@ SigLIP as the vision encoder, and the Gemma family of models as its language cou
 
 ## TODO
 
-- [x] **License plate detection** —
-  predicts a bounding box around the plate.
+- [x] Rebuild the license plate dataset and push it to our own Hugging Face account
+- [x] Prepend the `<image>` token to the prompt, so that recent `transformers` versions work
+- [x] Save a checkpoint (model, processor, optimizer state and RNG state) every `SAVE_EPOCH` epochs
+- [x] Resume an interrupted run from a checkpoint with `--resume`
+- [x] Add `predict.py`, which runs the fine tuned model over the test set and writes the annotated
+  images
+- [x] **License plate detection** — predicts a bounding box around the plate
 - [ ] **License plate number recognition (OCR)** — the goal is to extend the task so that the model
   reads the characters on the plate as well, and outputs the plate number together with its
-  bounding box.
+  bounding box
 
 ## Pretrained Model
 
