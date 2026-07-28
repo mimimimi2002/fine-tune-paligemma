@@ -210,6 +210,22 @@ if __name__ == "__main__":
         # run model generation before fine tuning
         infer_on_model(model, test_batch)
 
+    if args.resume:
+        # restore the RNG state as the very last step, so that nothing above
+        # (model loading, the sample generation) consumes the restored stream
+        cpu_rng_state = checkpoint.get("cpu_rng_state")
+        if cpu_rng_state is None:
+            print("[WARN] no RNG state in the checkpoint, the shuffling order will differ")
+        else:
+            torch.set_rng_state(cpu_rng_state)
+
+            cuda_rng_state = checkpoint.get("cuda_rng_state")
+            if cuda_rng_state is not None and torch.cuda.is_available():
+                if len(cuda_rng_state) == torch.cuda.device_count():
+                    torch.cuda.set_rng_state_all(cuda_rng_state)
+                else:
+                    print("[WARN] skipping the CUDA RNG state, the device count changed")
+
     for epoch in range(start_epoch, object_detection_config.EPOCHS):
         for idx, batch in enumerate(train_dataloader):
             outputs = model(**batch)
@@ -232,6 +248,12 @@ if __name__ == "__main__":
                 {
                     "epoch": epoch + 1,
                     "optimizer": optimizer.state_dict(),
+                    "cpu_rng_state": torch.get_rng_state(),
+                    "cuda_rng_state": (
+                        torch.cuda.get_rng_state_all()
+                        if torch.cuda.is_available()
+                        else None
+                    ),
                 },
                 os.path.join(save_dir, "training_state.pt")
             )
