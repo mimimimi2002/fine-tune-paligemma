@@ -10,6 +10,10 @@ from paligemma_ft.data_utis import collate_fn
 from paligemma_ft.model_utils import freeze_layers
 from functools import partial
 from matplotlib import pyplot as plt, patches
+import os
+import argparse
+
+SAVE_EPOCH = 1
 
 DETECT_RE = re.compile(
     r"(.*?)" + r"((?:<loc\d{4}>){4})\s*" + r"([^;<>]+) ?(?:; )?",
@@ -107,6 +111,9 @@ def infer_on_model(model, test_batch, before_pt=True):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--resume", type=str, default=None)
+    args = parser.parse_args()
     # get the device
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
@@ -119,7 +126,12 @@ if __name__ == "__main__":
 
     # get the processor
     print(f"[INFO] loading {object_detection_config.MODEL_ID} processor from hub...")
-    processor = AutoProcessor.from_pretrained(object_detection_config.MODEL_ID)
+    if args.resume:
+        processor = AutoProcessor.from_pretrained(args.resume)
+    else:
+        processor = AutoProcessor.from_pretrained(
+            object_detection_config.MODEL_ID
+        )
 
     # build the data loaders
     print("[INFO] building the data loaders...")
@@ -154,27 +166,52 @@ if __name__ == "__main__":
 
     # load the pre trained model
     print(f"[INFO] loading {object_detection_config.MODEL_ID} model...")
-    model = PaliGemmaForConditionalGeneration.from_pretrained(
-        object_detection_config.MODEL_ID,
-        torch_dtype=object_detection_config.MODEL_DTYPE,
-        device_map=device,
-        revision=object_detection_config.MODEL_REVISION,
-    )
+    if args.resume:
+        model = PaliGemmaForConditionalGeneration.from_pretrained(
+            args.resume,
+            torch_dtype=object_detection_config.MODEL_DTYPE,
+            device_map=device,
+        )
+    else:
+        model = PaliGemmaForConditionalGeneration.from_pretrained(
+            object_detection_config.MODEL_ID,
+            torch_dtype=object_detection_config.MODEL_DTYPE,
+            device_map=device,
+            revision=object_detection_config.MODEL_REVISION,
+        )
 
     # freeze the weights
     print(f"[INFO] freezing the model weights...")
     model = freeze_layers(model, not_to_freeze="attn")
-
-    # run model generation before fine tuning
-    test_batch = next(iter(test_dataloader))
-    infer_on_model(model, test_batch)
 
     # fine tune the model
     print("[INFO] fine tuning the model...")
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=object_detection_config.LEARNING_RATE
     )
-    for epoch in range(object_detection_config.EPOCHS):
+    start_epoch = 0
+
+    if args.resume:
+        checkpoint = torch.load(
+            os.path.join(args.resume, "training_state.pt"),
+            map_location="cpu"
+        )
+        optimizer.load_state_dict(
+            checkpoint["optimizer"]
+        )
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if torch.is_tensor(v):
+                    state[k] = v.to(device)
+        start_epoch = checkpoint["epoch"]
+        print(f"Resume from epoch {start_epoch}")
+
+    if not args.resume:
+        # run model generation before fine tuning
+        test_batch = next(iter(test_dataloader))
+        infer_on_model(model, test_batch)
+
+    for epoch in range(start_epoch, object_detection_config.EPOCHS):
         for idx, batch in enumerate(train_dataloader):
             outputs = model(**batch)
             loss = outputs.loss
@@ -184,6 +221,21 @@ if __name__ == "__main__":
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
+
+        if (epoch + 1) % SAVE_EPOCH == 0:
+            save_dir = f"./checkpoints/epoch-{epoch+1}"
+            os.makedirs(save_dir, exist_ok=True)
+
+            model.save_pretrained(save_dir)
+            processor.save_pretrained(save_dir)
+
+            torch.save(
+                {
+                    "epoch": epoch + 1,
+                    "optimizer": optimizer.state_dict(),
+                },
+                os.path.join(save_dir, "training_state.pt")
+            )
 
     # run model generation after fine tuning
     infer_on_model(model, test_batch, before_pt=False)
