@@ -18,6 +18,10 @@ SigLIP as the vision encoder, and the Gemma family of models as its language cou
 - [x] **Resumable training** — continue an interrupted run from a checkpoint with `--resume`
 - [x] **Inference script** — `predict.py` runs the fine tuned model over the test set and writes the
   annotated images
+- [x] **Fine tuning: attention layers only** — freeze every weight except the attention ones, with
+  `freeze_layers(model, not_to_freeze="attn")`
+- [ ] **Fine tuning: LoRA** — train low rank adapters instead, and compare the result against the
+  attention only run
 - [ ] **License plate number recognition (OCR)** — the goal is to extend the task so that the model
   reads the characters on the plate as well, and outputs the plate number together with its
   bounding box
