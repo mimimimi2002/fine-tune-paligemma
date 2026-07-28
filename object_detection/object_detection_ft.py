@@ -13,8 +13,6 @@ from matplotlib import pyplot as plt, patches
 import os
 import argparse
 
-SAVE_EPOCH = 1
-
 DETECT_RE = re.compile(
     r"(.*?)" + r"((?:<loc\d{4}>){4})\s*" + r"([^;<>]+) ?(?:; )?",
 )
@@ -222,7 +220,7 @@ if __name__ == "__main__":
             optimizer.step()
             optimizer.zero_grad()
 
-        if (epoch + 1) % SAVE_EPOCH == 0:
+        if (epoch + 1) % object_detection_config.SAVE_EPOCH == 0:
             save_dir = f"./checkpoints/epoch-{epoch+1}"
             os.makedirs(save_dir, exist_ok=True)
 
