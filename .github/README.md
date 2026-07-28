@@ -9,6 +9,14 @@ resumable training were added.
 PaliGemma (PG) is a family of Vision Language Models from Google. It uses
 SigLIP as the vision encoder, and the Gemma family of models as its language counterpart.
 
+## TODO
+
+- [x] **License plate detection** —
+  predicts a bounding box around the plate.
+- [ ] **License plate number recognition (OCR)** — the goal is to extend the task so that the model
+  reads the characters on the plate as well, and outputs the plate number together with its
+  bounding box.
+
 ## Pretrained Model
 
 The pretrained model fine tuned in this project is
