@@ -204,9 +204,10 @@ if __name__ == "__main__":
         start_epoch = checkpoint["epoch"]
         print(f"Resume from epoch {start_epoch}")
 
+    # run model generation before fine tuning only if not resuming from a checkpoint
+    test_batch = next(iter(test_dataloader))
     if not args.resume:
         # run model generation before fine tuning
-        test_batch = next(iter(test_dataloader))
         infer_on_model(model, test_batch)
 
     for epoch in range(start_epoch, object_detection_config.EPOCHS):
