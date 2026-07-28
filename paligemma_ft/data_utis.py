@@ -4,7 +4,8 @@ import torch
 def collate_fn(examples, image_title, prompt, suffix_title, processor, device, train):
     images = [example[image_title].convert("RGB") for example in examples]
 
-    prompt = [prompt for _ in examples]
+    # add <image> token to the prompt
+    prompt = ["<image> " + prompt for _ in examples]
     if train:
         suffix = [example[suffix_title] for example in examples]
     else:
