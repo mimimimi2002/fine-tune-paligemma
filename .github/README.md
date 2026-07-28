@@ -9,16 +9,14 @@ resumable training were added.
 PaliGemma (PG) is a family of Vision Language Models from Google. It uses
 SigLIP as the vision encoder, and the Gemma family of models as its language counterpart.
 
-> [!Note]
-The upstream authors have covered SigLIP in depth in their blog
-[Choosing Between SigLIP and CLIP for Language Image Pretraining](https://blog.ritwikraha.dev/choosing-between-siglip-and-clip-for-language-image-pretraining) if you wanted to read
-about it.
+## Pretrained Model
 
-Models hosted on Hugging Face Hub:
+The pretrained model fine tuned in this project is
+[`google/paligemma-3b-pt-224`](https://huggingface.co/google/paligemma-3b-pt-224), loaded from its
+`bfloat16` revision.
 
-1. [PaliGemma](https://huggingface.co/collections/google/paligemma-release-6643a9ffbf57de2ae0448dda)
-2. [PaliGemma 2](https://huggingface.co/collections/google/paligemma-2-release-67500e1e1dbfdd4dee27ba48)
-
+- Parameters: 3 billion
+- Input image size: 224 x 224 pixels
 
 ## Usage
 ### Set up env
@@ -26,6 +24,13 @@ Models hosted on Hugging Face Hub:
 conda create -n paligemma python=3.10
 conda activate paligemma
 pip install -r requirements.txt
+```
+
+PaliGemma is a gated model, so accept the license on the model page and log in before running the
+scripts:
+
+```
+huggingface-cli login
 ```
 
 ### Run script
@@ -86,6 +91,9 @@ python -m object_detection.object_detection_ft --resume ./checkpoints/epoch-10
 When `--resume` is given, the model and the processor are loaded from the checkpoint directory
 instead of the Hub, the optimizer state is restored (and moved onto the training device), and
 training continues from the next epoch.
+
+The RNG state is restored as well, so the data shuffling order of the remaining epochs matches an
+uninterrupted run.
 
 ### Configuration
 
