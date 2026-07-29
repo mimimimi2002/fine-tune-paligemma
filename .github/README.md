@@ -126,6 +126,10 @@ uninterrupted run.
 `BATCH_SIZE` was lowered to fit the GPU used for these runs, and `EPOCHS` was raised so that the
 checkpoint and resume flow is actually exercised.
 
+### Training process
+<img width="2100" height="1050" alt="finetune_loss (1)" src="https://github.com/user-attachments/assets/445b90fd-4303-4895-a46b-d455dc7dbf57" />
+
+
 ## Citation
 
 This is a fork. If you like the original work and would use it please cite the upstream authors:
