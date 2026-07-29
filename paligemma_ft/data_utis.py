@@ -8,10 +8,12 @@ def collate_fn(examples, image_title, prompt, suffix_title, processor, device, t
     prompt = ["<image> " + prompt for _ in examples]
     if train:
         suffix = [example[suffix_title] for example in examples]
+    # if not training, not allowed to cheat by using the ground truth labels
     else:
         suffix = None
 
     # Help from: https://github.com/huggingface/transformers/issues/30987
+    # Processor put the images and text together, and returns a dictionary of tensors
     inputs = processor(
         images=images,
         text=prompt,
@@ -21,4 +23,5 @@ def collate_fn(examples, image_title, prompt, suffix_title, processor, device, t
     )
 
     inputs = inputs.to(torch.bfloat16).to(device)
+    inputs[suffix_title] = [example[suffix_title] for example in examples]
     return inputs

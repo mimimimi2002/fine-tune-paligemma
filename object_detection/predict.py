@@ -12,10 +12,27 @@ import matplotlib
 from matplotlib import pyplot as plt, patches
 import os
 import argparse
+from scipy.optimize import linear_sum_assignment
 
 DETECT_RE = re.compile(
     r"(.*?)" + r"((?:<loc\d{4}>){4})\s*" + r"([^;<>]+) ?(?:; )?",
 )
+
+def box_iou(a, b):
+    """a: (N,4), b: (M,4) xyxy -> (N,M)"""
+    a = np.asarray(a, dtype=float).reshape(-1, 4)
+    b = np.asarray(b, dtype=float).reshape(-1, 4)
+
+    area_a = (a[:, 2] - a[:, 0]).clip(0) * (a[:, 3] - a[:, 1]).clip(0)
+    area_b = (b[:, 2] - b[:, 0]).clip(0) * (b[:, 3] - b[:, 1]).clip(0)
+
+    lt = np.maximum(a[:, None, :2], b[None, :, :2])
+    rb = np.minimum(a[:, None, 2:], b[None, :, 2:])
+    wh = (rb - lt).clip(min=0)
+    inter = wh[..., 0] * wh[..., 1]
+
+    union = area_a[:, None] + area_b[None, :] - inter
+    return inter / np.clip(union, 1e-9, None)
 
 
 def extract_objects(detection_string, image_width, image_height, unique_labels=False):
@@ -158,7 +175,12 @@ if __name__ == "__main__":
     print("[INFO] running inference on the test set...")
     image_index = 0
     reached_limit = False
+
+    total_iou = 0.0
+    total_pairs = 0
     for batch in test_dataloader:
+        gt_detection_strings = batch.pop("label_for_paligemma")
+        batch.pop("labels", None)
         with torch.inference_mode():
             generated_outputs = model.generate(
                 **batch, max_new_tokens=100, do_sample=False
@@ -167,8 +189,10 @@ if __name__ == "__main__":
             generated_outputs, skip_special_tokens=True
         )
 
-        for offset, element in enumerate(generated_outputs):
-            image = unnormalize_image(batch["pixel_values"][offset], processor)
+        for element, pixel_values, gt_detection_string in zip(
+            generated_outputs, batch["pixel_values"], gt_detection_strings, strict=True
+        ):
+            image = unnormalize_image(pixel_values, processor)
             image_height, image_width = image.shape[:2]
 
             detection_string = get_detection_string(element)
@@ -176,10 +200,31 @@ if __name__ == "__main__":
                 detection_string, image_width, image_height, unique_labels=False
             )
 
+            gt_objects = extract_objects(
+                gt_detection_string, image_width, image_height, unique_labels=False
+            )
+
             if objects:
-                print(f"[{image_index:05d}] {detection_string}")
+                print(f"[{image_index:05d}] Predicted    {detection_string}")
+                print(f"[{image_index:05d}] Ground Truth {gt_detection_string}")
+
+                pred_boxes = np.array([o["xyxy"] for o in objects], float).reshape(-1, 4)
+                gt_boxes = np.array([o["xyxy"] for o in gt_objects], float).reshape(-1, 4)
+
+                if len(gt_boxes):
+                    iou = box_iou(pred_boxes, gt_boxes)
+                    r, c = linear_sum_assignment(iou, maximize=True)
+                    matched = iou[r, c]                     # ← 別名にする
+
+                    total_iou += matched.sum()
+                    total_pairs += len(matched)
+
+                    print(f"[{image_index:05d}] IoU {np.round(matched, 3).tolist()}  "
+                          f"pred={len(pred_boxes)} gt={len(gt_boxes)}")
+                else:
+                    print(f"[{image_index:05d}] GT なし: {len(pred_boxes)} 件すべて FP")
             else:
-                print(f"[{image_index:05d}] No bbox found")
+                print(f"[{image_index:05d}] No bbox found (gt={len(gt_objects)})")
 
             save_path = (
                 None
@@ -200,3 +245,7 @@ if __name__ == "__main__":
         print(f"[INFO] done, {image_index} images")
     else:
         print(f"[INFO] done, {image_index} images written to {args.output_dir}")
+
+    if total_pairs > 0:
+        mean_iou = total_iou / total_pairs
+        print(f"[INFO] mean IoU over {total_pairs} pairs: {mean_iou:.3f}")
