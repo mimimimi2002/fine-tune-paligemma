@@ -130,6 +130,9 @@ checkpoint and resume flow is actually exercised.
 ### Training process
 <img width="1500" height="auto" alt="finetune_loss (1)" src="https://github.com/user-attachments/assets/445b90fd-4303-4895-a46b-d455dc7dbf57" />
 
+### Evaluation
+IoU: 0.797
+
 
 ## Citation
 
