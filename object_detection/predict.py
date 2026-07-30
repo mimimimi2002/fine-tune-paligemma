@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader
 from transformers import AutoProcessor, PaliGemmaForConditionalGeneration
 from datasets import load_dataset
 from configs import object_detection_config
+from PIL import Image
 
 from paligemma_ft.data_utis import collate_fn
 from functools import partial
@@ -17,23 +18,6 @@ from scipy.optimize import linear_sum_assignment
 DETECT_RE = re.compile(
     r"(.*?)" + r"((?:<loc\d{4}>){4})\s*" + r"([^;<>]+) ?(?:; )?",
 )
-
-def box_iou(a, b):
-    """a: (N,4), b: (M,4) xyxy -> (N,M)"""
-    a = np.asarray(a, dtype=float).reshape(-1, 4)
-    b = np.asarray(b, dtype=float).reshape(-1, 4)
-
-    area_a = (a[:, 2] - a[:, 0]).clip(0) * (a[:, 3] - a[:, 1]).clip(0)
-    area_b = (b[:, 2] - b[:, 0]).clip(0) * (b[:, 3] - b[:, 1]).clip(0)
-
-    lt = np.maximum(a[:, None, :2], b[None, :, :2])
-    rb = np.minimum(a[:, None, 2:], b[None, :, 2:])
-    wh = (rb - lt).clip(min=0)
-    inter = wh[..., 0] * wh[..., 1]
-
-    union = area_a[:, None] + area_b[None, :] - inter
-    return inter / np.clip(union, 1e-9, None)
-
 
 def extract_objects(detection_string, image_width, image_height, unique_labels=False):
     objects = []
@@ -113,55 +97,26 @@ def draw_bbox(image, objects, save_path=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", type=str, required=True)
+    parser.add_argument("--checkpoint", type=str, required=True,
+                        help="Path to the fine-tuned model checkpoint")
     parser.add_argument(
-        "--output-dir",
+        "--image_path",
         type=str,
-        default="./predictions",
-        help="directory the annotated images are written to",
+        help="Path to the image file",
+        required=True,
     )
-    parser.add_argument(
-        "--limit", type=int, default=None, help="stop after this many images"
-    )
-    parser.add_argument(
-        "--show",
-        action="store_true",
-        help="display each image instead of writing it to --output-dir",
-    )
+    parser.add_argument("--output_path", type=str, required=True,
+                            help="Path to the output file")
     args = parser.parse_args()
-
-    if not args.show:
-        # no display is needed when we only write files
-        matplotlib.use("Agg")
-        os.makedirs(args.output_dir, exist_ok=True)
 
     # get the device
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-    # load the test dataset
-    print(f"[INFO] loading {object_detection_config.DATASET_ID} from hub...")
-    test_dataset = load_dataset(object_detection_config.DATASET_ID, split="test")
+    image_input = Image.open(args.image_path).convert("RGB")
 
     # get the processor
     print(f"[INFO] loading processor from {args.checkpoint}...")
     processor = AutoProcessor.from_pretrained(args.checkpoint)
-
-    # build the data loader
-    print("[INFO] building the test data loader...")
-    test_dataloader = DataLoader(
-        test_dataset,
-        collate_fn=partial(
-            collate_fn,
-            image_title="image",
-            prompt="Detect license plate.",
-            suffix_title="label_for_paligemma",
-            processor=processor,
-            device=device,
-            train=False,
-        ),
-        batch_size=object_detection_config.BATCH_SIZE,
-        shuffle=False,
-    )
 
     # load the fine tuned model
     print(f"[INFO] loading model from {args.checkpoint}...")
@@ -172,80 +127,40 @@ if __name__ == "__main__":
     )
     model.eval()
 
-    print("[INFO] running inference on the test set...")
-    image_index = 0
-    reached_limit = False
+    print(f"[INFO] running inference on the image {args.image_path}...")
 
-    total_iou = 0.0
-    total_pairs = 0
-    for batch in test_dataloader:
-        gt_detection_strings = batch.pop("label_for_paligemma")
-        batch.pop("labels", None)
-        with torch.inference_mode():
-            generated_outputs = model.generate(
-                **batch, max_new_tokens=100, do_sample=False
-            )
-        generated_outputs = processor.batch_decode(
-            generated_outputs, skip_special_tokens=True
+    # Create a simple batch for the single image
+    inputs = processor(
+        text="<image> " + "Detect license plate.",
+        images=image_input,
+        return_tensors="pt"
+    )
+    
+    inputs = inputs.to(torch.bfloat16).to(device)
+    
+    with torch.inference_mode():
+        generated_outputs = model.generate(
+            **inputs, max_new_tokens=100, do_sample=False
+        )
+    generated_outputs = processor.batch_decode(
+        generated_outputs, skip_special_tokens=True
+    )
+
+    for element, pixel_values in zip(
+        generated_outputs, inputs["pixel_values"], strict=True
+    ):
+        image = unnormalize_image(pixel_values, processor)
+        image_height, image_width = image.shape[:2]
+
+        detection_string = get_detection_string(element)
+        objects = extract_objects(
+            detection_string, image_width, image_height, unique_labels=False
         )
 
-        for element, pixel_values, gt_detection_string in zip(
-            generated_outputs, batch["pixel_values"], gt_detection_strings, strict=True
-        ):
-            image = unnormalize_image(pixel_values, processor)
-            image_height, image_width = image.shape[:2]
+        if objects:
+            print(f"Predicted {detection_string}")
 
-            detection_string = get_detection_string(element)
-            objects = extract_objects(
-                detection_string, image_width, image_height, unique_labels=False
-            )
+            pred_boxes = np.array([o["xyxy"] for o in objects], float).reshape(-1, 4)
 
-            gt_objects = extract_objects(
-                gt_detection_string, image_width, image_height, unique_labels=False
-            )
-
-            if objects:
-                print(f"[{image_index:05d}] Predicted    {detection_string}")
-                print(f"[{image_index:05d}] Ground Truth {gt_detection_string}")
-
-                pred_boxes = np.array([o["xyxy"] for o in objects], float).reshape(-1, 4)
-                gt_boxes = np.array([o["xyxy"] for o in gt_objects], float).reshape(-1, 4)
-
-                if len(gt_boxes):
-                    iou = box_iou(pred_boxes, gt_boxes)
-                    r, c = linear_sum_assignment(iou, maximize=True)
-                    matched = iou[r, c]                     # ← 別名にする
-
-                    total_iou += matched.sum()
-                    total_pairs += len(matched)
-
-                    print(f"[{image_index:05d}] IoU {np.round(matched, 3).tolist()}  "
-                          f"pred={len(pred_boxes)} gt={len(gt_boxes)}")
-                else:
-                    print(f"[{image_index:05d}] GT なし: {len(pred_boxes)} 件すべて FP")
-            else:
-                print(f"[{image_index:05d}] No bbox found (gt={len(gt_objects)})")
-
-            save_path = (
-                None
-                if args.show
-                else os.path.join(args.output_dir, f"{image_index:05d}.png")
-            )
-            draw_bbox(image, objects, save_path=save_path)
-
-            image_index += 1
-            if args.limit is not None and image_index >= args.limit:
-                reached_limit = True
-                break
-
-        if reached_limit:
-            break
-
-    if args.show:
-        print(f"[INFO] done, {image_index} images")
-    else:
-        print(f"[INFO] done, {image_index} images written to {args.output_dir}")
-
-    if total_pairs > 0:
-        mean_iou = total_iou / total_pairs
-        print(f"[INFO] mean IoU over {total_pairs} pairs: {mean_iou:.3f}")
+        save_path = args.output_path
+        draw_bbox(image, objects, save_path=save_path)
