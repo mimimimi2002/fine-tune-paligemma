@@ -18,6 +18,8 @@ SigLIP as the vision encoder, and the Gemma family of models as its language cou
 - [x] **Resumable training** — continue an interrupted run from a checkpoint with `--resume`
 - [x] **Inference script** — `predict.py` runs the fine tuned model over the test set and writes the
   annotated images
+- [x] **Evaluation metrics** — `evaluation.py` reports mean IoU, precision / recall / F1 and
+  COCO style AP over the test split, and draws the ground truth next to every prediction
 - [x] **Fine tuning: attention layers only** — freeze every weight except the attention ones, with
   `freeze_layers(model, not_to_freeze="attn")`
 - [ ] **Fine tuning: LoRA** — train low rank adapters instead, and compare the result against the
@@ -60,6 +62,9 @@ python -m object_detection.object_detection_ft
 
 # 3. resume from a checkpoint
 python -m object_detection.object_detection_ft --resume ./checkpoints/epoch-10
+
+# 4. evaluate a checkpoint on the test split
+python -m object_detection.evaluation --checkpoint ./checkpoints/epoch-100
 ```
 
 See the [object detection readme](../object_detection/README.md) for more details.
@@ -131,7 +136,44 @@ checkpoint and resume flow is actually exercised.
 <img width="1500" height="auto" alt="finetune_loss (1)" src="https://github.com/user-attachments/assets/445b90fd-4303-4895-a46b-d455dc7dbf57" />
 
 ### Evaluation
-IoU: 0.797
+
+```bash
+python -m object_detection.evaluation --checkpoint ./checkpoints/epoch-100
+```
+
+`object_detection/evaluation.py` runs greedy generation over the whole `test` split (882 images, 902
+ground truth boxes), pairs the predicted boxes with the ground truth ones by maximising the total IoU,
+and writes an annotated image per sample (prediction in red, ground truth in dashed green).
+
+| Metric | Value |
+|---|---|
+| images / predictions / ground truths | 882 / 878 / 902 |
+| matched pairs | 876 |
+| mean IoU (matched pairs) | 0.797 |
+| Precision / Recall / F1 @ IoU 0.5 | 0.962 / 0.937 / 0.949 |
+| TP / FP / FN @ IoU 0.5 | 845 / 33 / 57 |
+| Precision / Recall / F1 @ IoU 0.75 | 0.744 / 0.724 / 0.734 |
+| TP / FP / FN @ IoU 0.75 | 653 / 225 / 249 |
+| AP @ IoU 0.5 | 0.922 |
+| AP @ IoU 0.75 | 0.575 |
+| mAP @ IoU [0.5:0.95] | 0.539 |
+| label accuracy | 1.000 |
+| exact match rate | 0.002 |
+
+Finding the plate is essentially solved, localising it precisely is not: F1 is 0.949 at the loose IoU
+0.5 threshold but 0.734 at IoU 0.75, and the average matched box sits at IoU 0.797. The model emits
+almost exactly one box per image (878 boxes over 882 images), so it rarely hallucinates a plate but
+does miss the second plate on multi-plate images.
+
+`label accuracy` (the generated label is always `license plate`) and `exact match rate` (all four
+`<locYYYY>` tokens identical to the ground truth) are format sanity checks rather than performance
+numbers — with coordinates quantised into 1024 buckets an exact string match is near impossible.
+
+See the [object detection readme](../object_detection/README.md#metrics) for how each metric is
+computed.
+
+### Test image
+
 
 
 ## Citation
