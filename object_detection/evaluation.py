@@ -184,9 +184,37 @@ def get_detection_string(decoded_output):
     return parts[1] if len(parts) > 1 else ""
 
 
-def draw_bbox(image, objects, save_path=None):
+PRED_COLOR = "red"
+GT_COLOR = "lime"
+
+
+def draw_bbox(image, objects, gt_objects=(), save_path=None, title=None):
+    """draw the predictions in red and the ground truth boxes in dashed green"""
     fig, ax = plt.subplots(1)
     ax.imshow(image)
+
+    for obj in gt_objects:
+        bbox = obj["xyxy"]
+        rect = patches.Rectangle(
+            (bbox[0], bbox[1]),
+            bbox[2] - bbox[0],
+            bbox[3] - bbox[1],
+            linewidth=2,
+            edgecolor=GT_COLOR,
+            facecolor="none",
+            linestyle="--",
+        )
+        ax.add_patch(rect)
+        # under the box, so it does not collide with the prediction label
+        ax.text(
+            bbox[0],
+            bbox[3] + 14,
+            obj["name"],
+            color=GT_COLOR,
+            fontsize=10,
+            weight="bold",
+        )
+
     for obj in objects:
         bbox = obj["xyxy"]
         rect = patches.Rectangle(
@@ -194,13 +222,30 @@ def draw_bbox(image, objects, save_path=None):
             bbox[2] - bbox[0],
             bbox[3] - bbox[1],
             linewidth=2,
-            edgecolor="r",
+            edgecolor=PRED_COLOR,
             facecolor="none",
         )
         ax.add_patch(rect)
         ax.text(
-            bbox[0], bbox[1] - 10, obj["name"], color="red", fontsize=12, weight="bold"
+            bbox[0],
+            bbox[1] - 10,
+            obj["name"],
+            color=PRED_COLOR,
+            fontsize=12,
+            weight="bold",
         )
+
+    ax.legend(
+        handles=[
+            patches.Patch(color=PRED_COLOR, label="prediction"),
+            patches.Patch(color=GT_COLOR, label="ground truth"),
+        ],
+        loc="lower right",
+        fontsize=8,
+        framealpha=0.6,
+    )
+    if title is not None:
+        ax.set_title(title, fontsize=9)
 
     if save_path is None:
         plt.show()
@@ -389,7 +434,17 @@ if __name__ == "__main__":
                 if args.show
                 else os.path.join(args.output_dir, f"{image_index:05d}.png")
             )
-            draw_bbox(image, objects, save_path=save_path)
+            draw_bbox(
+                image,
+                objects,
+                gt_objects=gt_objects,
+                save_path=save_path,
+                title=(
+                    f"[{image_index:05d}] IoU {np.round(matched, 3).tolist()}  "
+                    f"pred={len(pred_boxes)} gt={len(gt_boxes)} "
+                    f"conf={confidence:.3f}"
+                ),
+            )
 
             image_index += 1
             if args.limit is not None and image_index >= args.limit:
