@@ -173,7 +173,7 @@ See the [object detection readme](../object_detection/README.md#metrics) for how
 computed.
 
 ### Test image
-
+<img width="425" height="431" alt="00001" src="https://github.com/user-attachments/assets/5029a0ee-4322-4dec-9aa1-934a05b8536b" />
 
 
 ## Citation
