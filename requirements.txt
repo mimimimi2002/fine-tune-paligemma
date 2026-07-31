@@ -7,3 +7,5 @@ tqdm>=4.67.1
 transformers>=4.47.0
 accelerate>=1.2.1
 scipy>=1.15.0
+paddleocr==2.10.0
+paddlepaddle==2.6.2
