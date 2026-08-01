@@ -150,7 +150,7 @@ if __name__ == "__main__":
         collate_fn=partial(
             collate_fn,
             image_title="image",
-            prompt="Detect license plate.",
+            prompt=object_detection_config.PROMPT,
             suffix_title="label_for_paligemma",
             processor=processor,
             device=device,
@@ -164,7 +164,7 @@ if __name__ == "__main__":
         collate_fn=partial(
             collate_fn,
             image_title="image",
-            prompt="Detect license plate.",
+            prompt=object_detection_config.PROMPT,
             suffix_title="label_for_paligemma",
             processor=processor,
             device=device,
