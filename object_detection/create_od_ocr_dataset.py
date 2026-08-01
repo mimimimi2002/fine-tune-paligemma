@@ -4,21 +4,20 @@ import numpy as np
 
 ocr = PaddleOCR(use_angle_cls=True, lang='en')  # Initialize PaddleOCR
 
+MIN_OCR_CONFIDENCE = 0.5  # Minimum confidence threshold for OCR results
+
 def read_plate_number(image, bbox):
     x1, y1, x2, y2 = bbox
     cropped_image = image.crop((int(x1), int(y1), int(x2), int(y2)))
     ocr_results = ocr.ocr(np.array(cropped_image))
 
-    # Extract text from OCR results
-    plate_number = ""
-    if ocr_results is not None:
-        for line in ocr_results:
-            if line is not None:  # Check if the line has text
-                for word_info in line:
-                    text = word_info[1][0]  # The recognized text
-                    plate_number += text + " "
-
-    return plate_number.strip()  # Return the plate number without trailing spaces
+    candidates = []
+    for line in ocr_results or []:
+        for points, text, confidence in line or []:
+            if confidence < MIN_OCR_CONFIDENCE:
+                continue
+            candidates.append(text)
+    return " ".join(candidates).strip()  # Return the plate number without trailing spaces
 
 def coco_to_xyxy(coco_bbox):
     x, y, width, height = coco_bbox
