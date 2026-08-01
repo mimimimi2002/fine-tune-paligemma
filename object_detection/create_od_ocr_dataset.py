@@ -13,7 +13,7 @@ def read_plate_number(image, bbox):
 
     candidates = []
     for line in ocr_results or []:
-        for points, text, confidence in line or []:
+        for points, (text, confidence) in line or []:
             if confidence < MIN_OCR_CONFIDENCE:
                 continue
             candidates.append(text)
