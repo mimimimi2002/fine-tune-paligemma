@@ -18,6 +18,16 @@ DETECT_RE = re.compile(
 )
 
 
+def model_inputs(batch, keep_labels=True):
+    """collate_fn keeps the raw label strings on the batch so that the evaluation can
+    read them back, but the model only takes its own tensor inputs. `generate` also
+    rejects `labels`, so it is dropped for the inference call."""
+    drop = {"label_for_paligemma"}
+    if not keep_labels:
+        drop.add("labels")
+    return {key: value for key, value in batch.items() if key not in drop}
+
+
 def extract_objects(detection_string, image_width, image_height, unique_labels=False):
     objects = []
     seen_labels = set()
@@ -86,7 +96,9 @@ def infer_on_model(model, test_batch, before_pt=True):
 
     with torch.inference_mode():
         generated_outputs = model.generate(
-            **test_batch, max_new_tokens=100, do_sample=False
+            **model_inputs(test_batch, keep_labels=False),
+            max_new_tokens=100,
+            do_sample=False,
         )
         generated_outputs = processor.batch_decode(
             generated_outputs, skip_special_tokens=True
@@ -228,7 +240,7 @@ if __name__ == "__main__":
 
     for epoch in range(start_epoch, object_detection_config.EPOCHS):
         for idx, batch in enumerate(train_dataloader):
-            outputs = model(**batch)
+            outputs = model(**model_inputs(batch))
             loss = outputs.loss
             if idx % 500 == 0:
                 print(f"Epoch: {epoch} Iter: {idx} Loss: {loss.item():.4f}")
