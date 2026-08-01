@@ -164,7 +164,7 @@ Finding the plate is essentially solved, localising it precisely is not: F1 is 0
 almost exactly one box per image (878 boxes over 882 images), so it rarely hallucinates a plate but
 does miss the second plate on multi-plate images.
 
-`label accuracy` (the generated label is always `license plate`) and `exact match rate` (all four
+`label accuracy` (the generated label is always `plate`) and `exact match rate` (all four
 `<locYYYY>` tokens identical to the ground truth) are format sanity checks rather than performance
 numbers — with coordinates quantised into 1024 buckets an exact string match is near impossible.
 
