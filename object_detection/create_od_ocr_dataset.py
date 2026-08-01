@@ -11,7 +11,7 @@ def coco_to_xyxy(coco_bbox):
     return [x1, y1, x2, y2]
 
 
-def convert_to_detection_string(bboxs, image_width, image_height):
+def convert_to_detection_string(bboxs, image_width, image_height, image=None):
     def format_location(value, max_value):
         return f"<loc{int(round(value * 1024 / max_value)):04}>"
 
@@ -27,6 +27,19 @@ def convert_to_detection_string(bboxs, image_width, image_height):
         ]
         detection_string = "".join(locs) + f" {name}"
         detection_strings.append(detection_string)
+        
+        if image is not None:
+            cropped_image = image.crop((int(x1), int(y1), int(x2), int(y2)))
+            ocr_results = ocr.ocr(np.array(cropped_image))
+            # Extract text from OCR results
+            ocr_texts = []
+            if ocr_results is not None:
+                for line in ocr_results:
+                    if line is not None:  # Check if the line has text
+                        for word_info in line:
+                            text = word_info[1][0]  # The recognized text
+                            ocr_texts.append(text)
+            detection_strings.append(" ".join(ocr_texts))
 
     return " ; ".join(detection_strings)
 
@@ -42,26 +55,10 @@ def format_objects_with_ocr(example):
     height = example["height"]
     width = example["width"]
     bboxs = example["objects"]["bbox"]
-    formatted_objects = convert_to_detection_string(bboxs, width, height)
-
-    # Perform OCR on the image
-    image_path = example['image']
-    image = np.array(image_path)
-    ocr_results = ocr.ocr(image)
-
-    # Extract text from OCR results
-    ocr_texts = []
-    if ocr_results is not None:
-        for line in ocr_results:
-            if line is not None:  # Check if the line has text
-                for word_info in line:
-                    text = word_info[1][0]  # The recognized text
-                    ocr_texts.append(text)
-            
-    # Combine the formatted objects and OCR texts into a single string
-    combined_label = formatted_objects + " ; " + " ; ".join(ocr_texts)
+    formatted_objects = convert_to_detection_string(bboxs, width, height, example['image'])
+    print(f"[INFO] formatted objects: {formatted_objects}")
     
-    return {"label_for_paligemma": combined_label}
+    return {"label_for_paligemma": formatted_objects}
 
 
 if __name__ == "__main__":
