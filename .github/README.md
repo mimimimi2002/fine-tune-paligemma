@@ -348,6 +348,9 @@ numbers — with coordinates quantised into 1024 buckets an exact string match i
 See the [object detection readme](../object_detection/README.md#metrics) for how each metric is
 computed.
 
+### Example test image
+<img width="425" height="431" alt="00001" src="https://github.com/user-attachments/assets/5029a0ee-4322-4dec-9aa1-934a05b8536b" />
+
 ### OCR evaluation
 
 ```bash
@@ -371,8 +374,8 @@ directly comparable with the detection only run above.
 Ground truth caveat: the reference plate numbers come from PaddleOCR, not from a human, so
 `label_accuracy` measures agreement with PaddleOCR rather than with the true plate.
 
-### Test image
-<img width="425" height="431" alt="00001" src="https://github.com/user-attachments/assets/5029a0ee-4322-4dec-9aa1-934a05b8536b" />
+### Example test image
+
 
 ## Citation
 
