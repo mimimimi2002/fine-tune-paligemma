@@ -6,6 +6,7 @@ from transformers import AutoProcessor, PaliGemmaForConditionalGeneration
 from datasets import load_dataset
 from configs import object_detection_config
 from PIL import Image
+import time
 
 from paligemma_ft.data_utis import collate_fn
 from functools import partial
@@ -111,6 +112,8 @@ if __name__ == "__main__":
 
     # get the device
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    
+    start_time = time.time()
 
     image_input = Image.open(args.image_path).convert("RGB")
 
@@ -145,6 +148,9 @@ if __name__ == "__main__":
     generated_outputs = processor.batch_decode(
         generated_outputs, skip_special_tokens=True
     )
+    
+    end_time = time.time()
+    print(f"[INFO] Inference completed in {end_time - start_time:.2f} seconds.")
 
     for element, pixel_values in zip(
         generated_outputs, inputs["pixel_values"], strict=True
