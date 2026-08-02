@@ -34,12 +34,17 @@ SigLIP as the vision encoder, and the Gemma family of models as its language cou
   - [OCR only](#ocr-only)
     - [OCR dataset](#ocr-dataset)
     - [OCR fine tuning](#ocr-fine-tuning)
-- [Training](#training)
-  - [Configuration](#configuration)
-  - [Training process](#training-process)
-  - [Evaluation](#evaluation)
-  - [OCR evaluation](#ocr-evaluation)
-  - [Test image](#test-image)
+- [Training and evaluation](#training-and-evaluation)
+  - [Shared settings](#shared-settings)
+  - [Detection only](#detection-only)
+    - [Configuration](#configuration)
+    - [Training process](#training-process)
+    - [Evaluation](#evaluation)
+    - [Example test image](#example-test-image)
+  - [Detection + OCR](#detection--ocr)
+    - [Configuration](#configuration-1)
+    - [Evaluation](#evaluation-1)
+    - [Example test image](#example-test-image-1)
 - [Citation](#citation)
 
 ## TODO
@@ -293,15 +298,18 @@ and seeding included — with two differences:
 - checkpoints are written under `./checkpoints/ocr/` so that they do not collide with the detection
   only run
 
-## Training
-### Configuration
+## Training and evaluation
 
-`configs/object_detection_config.py`:
+### Shared settings
+
+The two runs use the same script and the same hyper parameters — only the dataset, the prompt and the
+checkpoint directory differ. Identical in both configs:
 
 | Setting | Upstream | This fork |
 |---|---|---|
-| `DATASET_ID` | `ariG23498/license-detection-paligemma` | `mimimimi2002/license-detection-paligemma` |
+| `MODEL_ID` | `google/paligemma-3b-pt-224` | `google/paligemma-3b-pt-224` |
 | `BATCH_SIZE` | 8 | 4 |
+| `LEARNING_RATE` | 5e-5 | 5e-5 |
 | `EPOCHS` | 1 | 100 |
 | `SAVE_EPOCH` | – | 10 |
 | `SEED` | – | 42 |
@@ -313,17 +321,22 @@ and seeding included — with two differences:
 checkpoint and resume flow is actually exercised. With early stopping in place `EPOCHS` is an upper
 bound rather than the actual length of the run.
 
-`configs/object_detection_ocr_config.py` holds the same keys, with the OCR dataset and prompt:
+### Detection only
+
+#### Configuration
+
+`configs/object_detection_config.py`, on top of the shared settings:
 
 | Setting | Value |
 |---|---|
-| `DATASET_ID` | `mimimimi2002/license-detection-paligemma-ocr` |
-| `PROMPT` | `Detect license plate and read its number.` |
+| `DATASET_ID` | `mimimimi2002/license-detection-paligemma` (upstream: `ariG23498/license-detection-paligemma`) |
+| `PROMPT` | `Detect license plate.` |
+| checkpoint directory | `./checkpoints/` |
 
-### Training process
+#### Training process
 <img width="1500" height="auto" alt="finetune_loss (1)" src="https://github.com/user-attachments/assets/445b90fd-4303-4895-a46b-d455dc7dbf57" />
 
-### Evaluation
+#### Evaluation
 
 ```bash
 python -m object_detection.evaluation --checkpoint ./checkpoints/epoch-100
@@ -360,10 +373,22 @@ numbers — with coordinates quantised into 1024 buckets an exact string match i
 See the [object detection readme](../object_detection/README.md#metrics) for how each metric is
 computed.
 
-### Example test image
+#### Example test image
 <img width="425" height="431" alt="00001" src="https://github.com/user-attachments/assets/5029a0ee-4322-4dec-9aa1-934a05b8536b" />
 
-### OCR evaluation
+### Detection + OCR
+
+#### Configuration
+
+`configs/object_detection_ocr_config.py`, on top of the shared settings:
+
+| Setting | Value |
+|---|---|
+| `DATASET_ID` | `mimimimi2002/license-detection-paligemma-ocr` |
+| `PROMPT` | `Detect license plate and read its number.` |
+| checkpoint directory | `./checkpoints/ocr/` |
+
+#### Evaluation
 
 ```bash
 python -m object_detection.evaluation_ocr --checkpoint ./checkpoints/ocr/best
@@ -386,7 +411,7 @@ directly comparable with the detection only run above.
 Ground truth caveat: the reference plate numbers come from PaddleOCR, not from a human, so
 `label_accuracy` measures agreement with PaddleOCR rather than with the true plate.
 
-### Example test image
+#### Example test image
 <img width="425" height="431" alt="00000" src="https://github.com/user-attachments/assets/50c2c236-056a-430d-9550-9555dbddba22" />
 
 
