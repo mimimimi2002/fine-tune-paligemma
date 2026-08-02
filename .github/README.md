@@ -23,7 +23,7 @@ SigLIP as the vision encoder, and the Gemma family of models as its language cou
   - [Set up env](#set-up-env)
   - [Run script](#run-script)
 - [Changes in this fork](#changes-in-this-fork)
-  - [Common to both variants](#common-to-both-variants)
+  - [Common to Detection and Detection + OCR](#common-to-both-variants)
     - [Dataset](#dataset)
     - [`<image>` token in the prompt](#image-token-in-the-prompt)
     - [Checkpoint saving](#checkpoint-saving)
@@ -31,7 +31,7 @@ SigLIP as the vision encoder, and the Gemma family of models as its language cou
     - [Early stopping and best checkpoint](#early-stopping-and-best-checkpoint)
     - [Fixed seed](#fixed-seed)
     - [Inference time](#inference-time)
-  - [OCR only](#ocr-only)
+  - [OCR + Detection](#ocr-only)
     - [OCR dataset](#ocr-dataset)
     - [OCR fine tuning](#ocr-fine-tuning)
 - [Training and evaluation](#training-and-evaluation)
@@ -260,7 +260,7 @@ CPU that extra decoding is hidden behind the per token compute, on GPU it is the
 `predict.py` prints one number for the whole single image run, which includes loading the processor
 and the model — useful as a cold start figure, not comparable with the per image numbers above.
 
-### OCR only
+### Detection + OCR
 
 #### OCR dataset
 
