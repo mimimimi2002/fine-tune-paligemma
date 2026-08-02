@@ -23,15 +23,17 @@ SigLIP as the vision encoder, and the Gemma family of models as its language cou
   - [Set up env](#set-up-env)
   - [Run script](#run-script)
 - [Changes in this fork](#changes-in-this-fork)
-  - [Dataset](#dataset)
-  - [OCR dataset](#ocr-dataset)
-  - [`<image>` token in the prompt](#image-token-in-the-prompt)
-  - [Checkpoint saving](#checkpoint-saving)
-  - [Resuming training](#resuming-training)
-  - [OCR fine tuning](#ocr-fine-tuning)
-  - [Early stopping and best checkpoint](#early-stopping-and-best-checkpoint)
-  - [Fixed seed](#fixed-seed)
-  - [Inference time](#inference-time)
+  - [Common to both variants](#common-to-both-variants)
+    - [Dataset](#dataset)
+    - [`<image>` token in the prompt](#image-token-in-the-prompt)
+    - [Checkpoint saving](#checkpoint-saving)
+    - [Resuming training](#resuming-training)
+    - [Early stopping and best checkpoint](#early-stopping-and-best-checkpoint)
+    - [Fixed seed](#fixed-seed)
+    - [Inference time](#inference-time)
+  - [OCR only](#ocr-only)
+    - [OCR dataset](#ocr-dataset)
+    - [OCR fine tuning](#ocr-fine-tuning)
 - [Training](#training)
   - [Configuration](#configuration)
   - [Training process](#training-process)
@@ -97,18 +99,18 @@ Detection only:
 # 1. convert the dataset and push it to the Hub
 python -m object_detection.create_od_dataset
 
-# 2. fine tune
+# 2. fine tune (early stopping on the validation split)
 python -m object_detection.object_detection_ft
 
 # 3. resume from a checkpoint
 python -m object_detection.object_detection_ft --resume ./checkpoints/epoch-10
 
-# 4. evaluate a checkpoint on the test split
-python -m object_detection.evaluation --checkpoint ./checkpoints/epoch-100
+# 4. evaluate the best checkpoint on the test split
+python -m object_detection.evaluation --checkpoint ./checkpoints/best
 
 # 5. run the model on a single image
 python -m object_detection.predict \
-    --checkpoint ./checkpoints/epoch-100 \
+    --checkpoint ./checkpoints/best \
     --image_path ./sample.jpg \
     --output_path ./sample_pred.png
 ```
@@ -133,7 +135,12 @@ See the [object detection readme](../object_detection/README.md) for more detail
 
 ## Changes in this fork
 
-### Dataset
+The changes split into two groups: those that apply to both variants of the task, and those that
+only exist for the detection + OCR variant.
+
+### Common to both variants
+
+#### Dataset
 
 We use the license plate dataset from Hugging Face
 ([`keremberke/license-plate-object-detection`](https://huggingface.co/datasets/keremberke/license-plate-object-detection)),
@@ -145,7 +152,100 @@ The converted dataset is pushed to our own account, so `DATASET_ID` points at
 [`mimimimi2002/license-detection-paligemma`](https://huggingface.co/datasets/mimimimi2002/license-detection-paligemma)
 instead of the upstream copy.
 
-### OCR dataset
+#### `<image>` token in the prompt
+
+`paligemma_ft/data_utis.py` now prepends the `<image>` token to the prompt:
+
+```python
+prompt = ["<image> " + prompt for _ in examples]
+```
+
+Recent versions of `transformers` expect the image token to be present in the text explicitly
+rather than inserting it inside the processor.
+
+#### Checkpoint saving
+
+`object_detection/object_detection_ft.py` writes a checkpoint every `SAVE_EPOCH` epochs to
+`./checkpoints/epoch-<N>/` (relative to the working directory), containing:
+
+- the model weights (`model.save_pretrained`)
+- the processor (`processor.save_pretrained`)
+- `training_state.pt` — the number of completed epochs, the AdamW optimizer state, and the CPU and
+  CUDA RNG states
+
+The early stopping state (`best_validation_loss` and `evaluations_without_improvement`) is stored in
+the same file. The OCR script writes to `./checkpoints/ocr/` instead, so that its checkpoints do not
+collide with the detection only run.
+
+#### Resuming training
+
+```bash
+python -m object_detection.object_detection_ft --resume ./checkpoints/epoch-10
+```
+
+When `--resume` is given, the model and the processor are loaded from the checkpoint directory
+instead of the Hub, the optimizer state is restored (and moved onto the training device), and
+training continues from the next epoch.
+
+The RNG state is restored as well, so the data shuffling order of the remaining epochs matches an
+uninterrupted run.
+
+#### Early stopping and best checkpoint
+
+Both training scripts load the `validation` split as well, with `train=True` in the collate function
+so that the suffix is tokenized into `labels` and the validation loss is computed exactly like the
+training loss.
+
+Every `EVAL_EPOCH` epochs `evaluate_loss()` runs the model over that split under
+`torch.inference_mode()` and returns the sample weighted mean loss. An evaluation counts as an
+improvement when the loss drops by more than `EARLY_STOPPING_MIN_DELTA` below the best loss seen so
+far. Otherwise a patience counter is incremented, and the run stops once it reaches
+`EARLY_STOPPING_PATIENCE`.
+
+| Setting | Value | Meaning |
+|---|---|---|
+| `EVAL_EPOCH` | 1 | how often the validation loss is computed, in epochs |
+| `EARLY_STOPPING_PATIENCE` | 5 | evaluations without improvement before the run stops |
+| `EARLY_STOPPING_MIN_DELTA` | 1e-4 | how much the loss has to drop to count as an improvement |
+
+Whenever the loss improves the weights are written to `./checkpoints/best/`, or
+`./checkpoints/ocr/best/` for the OCR run. This is separate from the periodic `epoch-<N>` checkpoints
+on purpose: those are simply the latest state, which after overfitting is *worse* than the best one.
+When the run stops early a checkpoint is also written unconditionally, so the final state is never
+lost between two `SAVE_EPOCH` boundaries.
+
+`training_state.pt` carries `best_validation_loss` and `evaluations_without_improvement` as well, so
+`--resume` continues with the same patience counter instead of restarting it. Checkpoints written
+before early stopping existed have neither key and simply start the counter over.
+
+#### Fixed seed
+
+`set_seed()` seeds `random`, `numpy` and `torch` (CPU and all CUDA devices) from `SEED` (42) before
+anything random happens, so two runs of the same config see the same weight initialisation, dropout
+draws and shuffling order.
+
+`DataLoader(shuffle=True)` seeds its own sampler from the global torch RNG, so seeding that one
+stream is enough to make the epoch order reproducible — and it is the same stream that `--resume`
+restores from the checkpoint. Seeding runs *before* the resume path, so when both apply the restored
+RNG state wins.
+
+#### Inference time
+
+Both evaluation scripts time the `generate()` call of every batch and print the per batch and per
+image wall clock time. `torch.cuda.synchronize()` is called on both sides of the timer when running
+on GPU, otherwise the measurement would only cover the kernel launches:
+
+```
+Batch inference: 6.214 sec
+Per image: 1.554 sec/image
+```
+
+`predict.py` prints one number for the whole single image run, which includes loading the processor
+and the model — useful as a cold start figure, not comparable with the per image numbers above.
+
+### OCR only
+
+#### OCR dataset
 
 `object_detection/create_od_ocr_dataset.py` builds a second dataset in which the label carries the
 plate number as well, so that the model can be trained on detection **and** recognition at once.
@@ -170,103 +270,16 @@ training noise, which is the main known limitation of this dataset.
 `paddleocr` and `paddlepaddle` were added to `requirements.txt` for this step. They are only needed
 to build the dataset, not to train or to evaluate.
 
-### `<image>` token in the prompt
-
-`paligemma_ft/data_utis.py` now prepends the `<image>` token to the prompt:
-
-```python
-prompt = ["<image> " + prompt for _ in examples]
-```
-
-Recent versions of `transformers` expect the image token to be present in the text explicitly
-rather than inserting it inside the processor.
-
-### Checkpoint saving
-
-`object_detection/object_detection_ft.py` writes a checkpoint every `SAVE_EPOCH` epochs to
-`./checkpoints/epoch-<N>/` (relative to the working directory), containing:
-
-- the model weights (`model.save_pretrained`)
-- the processor (`processor.save_pretrained`)
-- `training_state.pt` — the number of completed epochs, the AdamW optimizer state, and the CPU and
-  CUDA RNG states
-
-The OCR script additionally stores the early stopping state (`best_validation_loss` and
-`evaluations_without_improvement`) in the same file, and writes to `./checkpoints/ocr/`.
-
-### Resuming training
-
-```bash
-python -m object_detection.object_detection_ft --resume ./checkpoints/epoch-10
-```
-
-When `--resume` is given, the model and the processor are loaded from the checkpoint directory
-instead of the Hub, the optimizer state is restored (and moved onto the training device), and
-training continues from the next epoch.
-
-The RNG state is restored as well, so the data shuffling order of the remaining epochs matches an
-uninterrupted run.
-
-### OCR fine tuning
+#### OCR fine tuning
 
 `object_detection/object_detection_ocr_ft.py` is the training script for the detection + OCR
-variant. It mirrors `object_detection_ft.py` and adds:
+variant. It is the same script as `object_detection_ft.py` — checkpointing, resuming, early stopping
+and seeding included — with two differences:
 
-- `configs/object_detection_ocr_config.py` instead of the detection config — the OCR dataset and the
-  prompt `"Detect license plate and read its number."`
-- the **validation split** is loaded as well and turned into a `train=True` data loader, so the
-  validation loss is computed exactly like the training loss
-- **early stopping**, a **best checkpoint** and a **fixed seed** (below)
+- it reads `configs/object_detection_ocr_config.py` instead of the detection config, so it trains on
+  the OCR dataset with the prompt `"Detect license plate and read its number."`
 - checkpoints are written under `./checkpoints/ocr/` so that they do not collide with the detection
   only run
-
-### Early stopping and best checkpoint
-
-Every `EVAL_EPOCH` epochs `evaluate_loss()` runs the model over the validation split under
-`torch.inference_mode()` and returns the sample weighted mean loss. An evaluation counts as an
-improvement when the loss drops by more than `EARLY_STOPPING_MIN_DELTA` below the best loss seen so
-far. Otherwise a patience counter is incremented, and the run stops once it reaches
-`EARLY_STOPPING_PATIENCE`.
-
-| Setting | Value | Meaning |
-|---|---|---|
-| `EVAL_EPOCH` | 1 | how often the validation loss is computed, in epochs |
-| `EARLY_STOPPING_PATIENCE` | 5 | evaluations without improvement before the run stops |
-| `EARLY_STOPPING_MIN_DELTA` | 1e-4 | how much the loss has to drop to count as an improvement |
-
-Whenever the loss improves the weights are written to `./checkpoints/ocr/best/`. This is separate
-from the periodic `epoch-<N>` checkpoints on purpose: those are simply the latest state, which after
-overfitting is *worse* than the best one. When the run stops early a checkpoint is also written
-unconditionally, so the final state is never lost between two `SAVE_EPOCH` boundaries.
-
-`training_state.pt` carries `best_validation_loss` and `evaluations_without_improvement` as well, so
-`--resume` continues with the same patience counter instead of restarting it. Checkpoints written
-before early stopping existed have neither key and simply start the counter over.
-
-### Fixed seed
-
-`set_seed()` seeds `random`, `numpy` and `torch` (CPU and all CUDA devices) from `SEED` (42) before
-anything random happens, so two runs of the same config see the same weight initialisation, dropout
-draws and shuffling order.
-
-`DataLoader(shuffle=True)` seeds its own sampler from the global torch RNG, so seeding that one
-stream is enough to make the epoch order reproducible — and it is the same stream that `--resume`
-restores from the checkpoint. Seeding runs *before* the resume path, so when both apply the restored
-RNG state wins.
-
-### Inference time
-
-Both evaluation scripts time the `generate()` call of every batch and print the per batch and per
-image wall clock time. `torch.cuda.synchronize()` is called on both sides of the timer when running
-on GPU, otherwise the measurement would only cover the kernel launches:
-
-```
-Batch inference: 6.214 sec
-Per image: 1.554 sec/image
-```
-
-`predict.py` prints one number for the whole single image run, which includes loading the processor
-and the model — useful as a cold start figure, not comparable with the per image numbers above.
 
 ## Training
 ### Configuration
@@ -279,24 +292,21 @@ and the model — useful as a cold start figure, not comparable with the per ima
 | `BATCH_SIZE` | 8 | 4 |
 | `EPOCHS` | 1 | 100 |
 | `SAVE_EPOCH` | – | 10 |
+| `SEED` | – | 42 |
+| `EVAL_EPOCH` | – | 1 |
+| `EARLY_STOPPING_PATIENCE` | – | 5 |
+| `EARLY_STOPPING_MIN_DELTA` | – | 1e-4 |
 
 `BATCH_SIZE` was lowered to fit the GPU used for these runs, and `EPOCHS` was raised so that the
-checkpoint and resume flow is actually exercised.
+checkpoint and resume flow is actually exercised. With early stopping in place `EPOCHS` is an upper
+bound rather than the actual length of the run.
 
-`configs/object_detection_ocr_config.py` is the same, with the OCR dataset and the settings the
-detection only config does not have:
+`configs/object_detection_ocr_config.py` holds the same keys, with the OCR dataset and prompt:
 
 | Setting | Value |
 |---|---|
 | `DATASET_ID` | `mimimimi2002/license-detection-paligemma-ocr` |
 | `PROMPT` | `Detect license plate and read its number.` |
-| `SEED` | 42 |
-| `EVAL_EPOCH` | 1 |
-| `EARLY_STOPPING_PATIENCE` | 5 |
-| `EARLY_STOPPING_MIN_DELTA` | 1e-4 |
-
-With early stopping in place `EPOCHS` (100) is an upper bound rather than the actual length of the
-run.
 
 ### Training process
 <img width="1500" height="auto" alt="finetune_loss (1)" src="https://github.com/user-attachments/assets/445b90fd-4303-4895-a46b-d455dc7dbf57" />

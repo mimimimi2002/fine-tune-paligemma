@@ -28,7 +28,10 @@ evaluation script:
 | fine tuning | `object_detection_ft.py` | `object_detection_ocr_ft.py` |
 | evaluation | `evaluation.py` | `evaluation_ocr.py` |
 | config | `configs/object_detection_config.py` | `configs/object_detection_ocr_config.py` |
-| checkpoints | `./checkpoints/epoch-<N>/` | `./checkpoints/ocr/epoch-<N>/`, `./checkpoints/ocr/best/` |
+| checkpoints | `./checkpoints/epoch-<N>/`, `./checkpoints/best/` | `./checkpoints/ocr/epoch-<N>/`, `./checkpoints/ocr/best/` |
+
+The two training scripts are the same code on two configs: checkpointing, resuming, early stopping
+and seeding all apply to both.
 
 Shared on top of that:
 - `predict.py` — run a checkpoint on a single image file
@@ -78,11 +81,11 @@ Detection only:
 # 1. prepare the dataset
 python -m object_detection.create_od_dataset
 
-# 2. fine tune
+# 2. fine tune, with early stopping on the validation split
 python -m object_detection.object_detection_ft
 
-# 3. evaluate a checkpoint on the test split
-python -m object_detection.evaluation --checkpoint ./checkpoints/epoch-100
+# 3. evaluate the best checkpoint on the test split
+python -m object_detection.evaluation --checkpoint ./checkpoints/best
 ```
 
 Detection + OCR:
@@ -102,7 +105,7 @@ Single image:
 
 ```bash
 python -m object_detection.predict \
-    --checkpoint ./checkpoints/epoch-100 \
+    --checkpoint ./checkpoints/best \
     --image_path ./sample.jpg \
     --output_path ./sample_pred.png
 ```
@@ -239,14 +242,12 @@ The model and the processor are then loaded from that directory instead of the H
 state is restored (and moved onto the training device), and training continues from the next epoch.
 The "before fine tuning" sample inference is skipped.
 
-`object_detection_ocr_ft.py` writes to `./checkpoints/ocr/epoch-<N>/` instead, and stores the early
-stopping state in the same `training_state.pt`.
+The early stopping state is stored in the same `training_state.pt`. `object_detection_ocr_ft.py`
+writes to `./checkpoints/ocr/epoch-<N>/` instead.
 
 ## Early stopping and best checkpoint
 
-Implemented in `object_detection_ocr_ft.py`.
-
-The OCR training script also loads the `validation` split, with `train=True` in the collate function
+Both training scripts also load the `validation` split, with `train=True` in the collate function
 so that the suffix is tokenized into `labels` and the validation loss is computed exactly like the
 training loss. Every `EVAL_EPOCH` epochs `evaluate_loss()` runs the model over that split under
 `torch.inference_mode()` and returns the mean loss weighted by the number of samples per batch (the
@@ -260,10 +261,10 @@ the best loss so far. If it does not, a counter is incremented, and the run stop
 Epoch: 12 Validation loss: 0.1842 (best 0.1791, 3/5 evaluations without improvement)
 ```
 
-Every time the loss improves the weights are saved to `./checkpoints/ocr/best/`, separately from the
-periodic `epoch-<N>` checkpoints — those hold the latest state, which after the model starts
-overfitting is worse than the best one. `./checkpoints/ocr/best/` is therefore what
-`evaluation_ocr.py` should be pointed at.
+Every time the loss improves the weights are saved to `./checkpoints/best/` (`./checkpoints/ocr/best/`
+for the OCR run), separately from the periodic `epoch-<N>` checkpoints — those hold the latest state,
+which after the model starts overfitting is worse than the best one. `best/` is therefore what the
+evaluation scripts should be pointed at.
 
 When the run stops early a checkpoint is written unconditionally as well, so the final state is not
 lost if it falls between two `SAVE_EPOCH` boundaries.
@@ -273,8 +274,6 @@ lost if it falls between two `SAVE_EPOCH` boundaries.
 this existed carry neither key and start the counter over.
 
 ## Seeding
-
-Implemented in `object_detection_ocr_ft.py`.
 
 `set_seed(SEED)` seeds `random`, `numpy` and `torch` (CPU and all CUDA devices) before anything
 random happens, so weight initialisation, dropout and the shuffling order repeat across runs of the
@@ -294,12 +293,13 @@ Key parameters can be modified in `configs/object_detection_config.py`:
 - SAVE_EPOCH — how often a checkpoint is written, in epochs
 - MODEL_ID
 - DATASET_ID
-
-`configs/object_detection_ocr_config.py` holds the same keys for the OCR run, plus:
-- PROMPT — `Detect license plate and read its number.`
+- PROMPT
 - SEED — 42
 - EVAL_EPOCH — how often the validation loss is computed, in epochs
 - EARLY_STOPPING_PATIENCE — evaluations without improvement before the run stops
 - EARLY_STOPPING_MIN_DELTA — how much the loss has to drop to count as an improvement
 
 With early stopping enabled, `EPOCHS` acts as an upper bound rather than the length of the run.
+
+`configs/object_detection_ocr_config.py` holds the same keys for the OCR run, with the OCR dataset
+and the prompt `Detect license plate and read its number.`
