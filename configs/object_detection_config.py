@@ -8,4 +8,4 @@ MODEL_DTYPE = torch.bfloat16
 MODEL_REVISION = "bfloat16"
 EPOCHS = 100
 SAVE_EPOCH = 10
-PROMPT = "Detect license."
+PROMPT = "Detect license plate."
