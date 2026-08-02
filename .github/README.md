@@ -240,6 +240,18 @@ Batch inference: 6.214 sec
 Per image: 1.554 sec/image
 ```
 
+Measured on the `test` split, in seconds per image:
+
+| variant | CPU | GPU |
+|---|---|---|
+| detection only | 10.343 | 0.094 |
+| detection + OCR | 12.298 | 0.592 |
+
+The GPU is the whole story here: it turns a 10 second per image job into a real time one, roughly
+110x on the detection only model. OCR costs about 19% more on CPU but 6.3x more on GPU, because it
+generates the plate characters on top of the four location tokens and generation is sequential — on
+CPU that extra decoding is hidden behind the per token compute, on GPU it is the dominant cost.
+
 `predict.py` prints one number for the whole single image run, which includes loading the processor
 and the model — useful as a cold start figure, not comparable with the per image numbers above.
 

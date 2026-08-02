@@ -145,6 +145,17 @@ Batch inference: 6.214 sec
 Per image: 1.554 sec/image
 ```
 
+Measured over the `test` split, in seconds per image:
+
+| variant | CPU | GPU |
+| --- | --- | --- |
+| detection only | 10.343 | 0.094 |
+| detection + OCR | 12.298 | 0.592 |
+
+The OCR model has to generate the plate characters after the four location tokens, and generation is
+sequential, so it pays for the longer output — a 19% overhead on CPU but 6.3x on GPU, where the per
+token compute no longer hides it.
+
 ### Metrics
 
 Predictions and ground truth boxes are paired per image with a one-to-one assignment that maximises
