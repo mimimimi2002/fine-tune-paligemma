@@ -4,36 +4,97 @@ This folder contains code for creating dataset and fine-tuning the PaliGemma vis
 
 ## Overview
 
-The folder consists of three main components:
-1. Dataset preparation `create_od_dataset.py`
-2. Model fine-tuning and inference `object_detection_ft.py`, and also an interactive notebook `license_plate_detection_paligemma_ft.ipynb`
-3. Evaluation on the test split `evaluation.py`
+Two variants of the task are implemented, each with its own dataset builder, training script and
+evaluation script:
+
+| step | detection only | detection + OCR |
+| --- | --- | --- |
+| dataset | `create_od_dataset.py` | `create_od_ocr_dataset.py` |
+| fine tuning | `object_detection_ft.py` | `object_detection_ocr_ft.py` |
+| evaluation | `evaluation.py` | `evaluation_ocr.py` |
+| config | `configs/object_detection_config.py` | `configs/object_detection_ocr_config.py` |
+| checkpoints | `./checkpoints/epoch-<N>/` | `./checkpoints/ocr/epoch-<N>/`, `./checkpoints/ocr/best/` |
+
+Shared on top of that:
+- `predict.py` — run a checkpoint on a single image file
+- `license_plate_detection_paligemma_ft.ipynb` — interactive version of the detection only flow
+
+The detection only model outputs a box labelled `plate`; the OCR model outputs the box together with
+the characters on the plate, e.g. `<loc0512><loc0330><loc0570><loc0450> plate ABC1234`.
 
 ## Dataset
 
 The project uses the license plate detection dataset from Hugging Face Hub:
 - Source dataset: [`keremberke/license-plate-object-detection`](https://huggingface.co/datasets/keremberke/license-plate-object-detection)
 - Processed dataset: [`mimimimi2002/license-detection-paligemma`](https://huggingface.co/datasets/mimimimi2002/license-detection-paligemma)
+- Processed dataset with plate numbers: [`mimimimi2002/license-detection-paligemma-ocr`](https://huggingface.co/datasets/mimimimi2002/license-detection-paligemma-ocr)
 
 `create_od_dataset.py` converts the COCO format annotations into the `<locYYYY>` detection string
 format PaliGemma is trained on, and pushes the result to the Hub.
 
+### OCR dataset
+
+`create_od_ocr_dataset.py` does the same conversion and additionally reads the plate number, so that
+the label trains detection and recognition at once.
+
+For every ground truth box the image is cropped to that box and passed to
+[PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) (`use_angle_cls=True, lang="en"`). Text lines
+scoring below `MIN_OCR_CONFIDENCE` (0.5) are discarded, the rest are joined with a space and appended
+to the label:
+
+```
+<loc0512><loc0330><loc0570><loc0450> plate ABC1234 ; <loc0700><loc0120><loc0740><loc0210> plate
+```
+
+The second box in that example is what happens when the OCR reads nothing above the threshold: the
+label falls back to the bare `plate`, so the box still works as a detection example.
+
+Building this dataset needs `paddleocr` and `paddlepaddle` (both in `requirements.txt`); training and
+evaluation do not.
+
+**Caveat:** the plate numbers are auto labelled and never checked by a human, so PaddleOCR errors end
+up in the training data and in the evaluation ground truth.
+
 ## Usage
 
-1. First, prepare the dataset:
+Detection only:
+
 ```bash
+# 1. prepare the dataset
 python -m object_detection.create_od_dataset
-```
 
-2. Run the fine-tuning:
-```bash
+# 2. fine tune
 python -m object_detection.object_detection_ft
-```
 
-3. Evaluate a checkpoint on the test split:
-```bash
+# 3. evaluate a checkpoint on the test split
 python -m object_detection.evaluation --checkpoint ./checkpoints/epoch-100
 ```
+
+Detection + OCR:
+
+```bash
+# 1. prepare the dataset (labels the plate numbers with PaddleOCR)
+python -m object_detection.create_od_ocr_dataset
+
+# 2. fine tune, with early stopping on the validation split
+python -m object_detection.object_detection_ocr_ft
+
+# 3. evaluate the best checkpoint on the test split
+python -m object_detection.evaluation_ocr --checkpoint ./checkpoints/ocr/best
+```
+
+Single image:
+
+```bash
+python -m object_detection.predict \
+    --checkpoint ./checkpoints/epoch-100 \
+    --image_path ./sample.jpg \
+    --output_path ./sample_pred.png
+```
+
+`predict.py` loads one image, runs greedy generation, draws the predicted boxes and writes the result
+to `--output_path`. It also prints the total time of the run, which includes loading the processor
+and the model.
 
 ## Evaluation
 
@@ -54,6 +115,17 @@ python -m object_detection.evaluation \
 | `--limit` | stop after this many images, useful for a quick smoke test |
 | `--show` | display each image instead of writing it to `--output-dir` |
 | `--metrics-json` | also dump the summary metrics to this JSON file |
+
+`evaluation_ocr.py` takes the same flags; only the config it reads (dataset, prompt) and the default
+`--output-dir` (`./predictions/ocr`) differ.
+
+Both scripts time every `generate()` call and print the wall clock cost of the batch and of a single
+image, with `torch.cuda.synchronize()` on both sides of the timer when running on GPU:
+
+```
+Batch inference: 6.214 sec
+Per image: 1.554 sec/image
+```
 
 ### Metrics
 
@@ -77,6 +149,23 @@ PaliGemma emits no per-box confidence, so `ap@t` uses the mean probability of th
 a sequence level confidence and assigns it to every box decoded from that sequence. Boxes from the
 same image therefore tie, and their relative order inside the ranking is arbitrary — the AP numbers
 are slightly pessimistic because of that.
+
+#### On the OCR dataset
+
+The metric code is identical, but the label is now `plate <number>` instead of `plate`, which changes
+what two of the metrics mean:
+
+- `label_accuracy` becomes the **plate number recognition accuracy** over the matched pairs — a pair
+  only counts when the model read the same characters as the ground truth. On the detection only
+  dataset it is 1.000 by construction and carries no information.
+- `exact_match_rate` now requires the four location tokens *and* the plate number to be identical, so
+  it stays a format sanity check rather than a performance number.
+
+The box metrics (`mean_iou_matched`, precision / recall / F1, AP, mAP) do not look at the label at
+all and stay directly comparable between the two runs.
+
+Because the ground truth plate numbers come from PaddleOCR, `label_accuracy` measures agreement with
+PaddleOCR, not with the true plate.
 
 ### Results
 
@@ -106,8 +195,9 @@ Reading the numbers:
 - **Almost every image gets exactly one prediction** (878 predictions over 882 images), while the
   ground truth has 902 boxes. The model rarely hallucinates a second plate, but it also misses the
   extra plate on multi-plate images, which is most of the 26 unmatched ground truth boxes.
-- **`label_accuracy` of 1.000** means the generated label is always `license plate`; the format never
-  degrades. It is not an informative metric on this single class dataset.
+- **`label_accuracy` of 1.000** means the generated label is always `plate`; the format never
+  degrades. It is not an informative metric on this single class dataset — it becomes one on the OCR
+  dataset, where the label carries the plate number.
 - **`exact_match_rate` of 0.002 is expected, not a bug.** Coordinates are quantised into 1024 buckets,
   so all four location tokens landing on the ground truth value at once is near impossible. It is
   useful only as a sanity check that the output format is being reproduced.
@@ -134,6 +224,52 @@ The model and the processor are then loaded from that directory instead of the H
 state is restored (and moved onto the training device), and training continues from the next epoch.
 The "before fine tuning" sample inference is skipped.
 
+`object_detection_ocr_ft.py` writes to `./checkpoints/ocr/epoch-<N>/` instead, and stores the early
+stopping state in the same `training_state.pt`.
+
+## Early stopping and best checkpoint
+
+Implemented in `object_detection_ocr_ft.py`.
+
+The OCR training script also loads the `validation` split, with `train=True` in the collate function
+so that the suffix is tokenized into `labels` and the validation loss is computed exactly like the
+training loss. Every `EVAL_EPOCH` epochs `evaluate_loss()` runs the model over that split under
+`torch.inference_mode()` and returns the mean loss weighted by the number of samples per batch (the
+model is put back into whichever mode it was in afterwards).
+
+An evaluation counts as an improvement when the loss falls more than `EARLY_STOPPING_MIN_DELTA` below
+the best loss so far. If it does not, a counter is incremented, and the run stops once it reaches
+`EARLY_STOPPING_PATIENCE`:
+
+```
+Epoch: 12 Validation loss: 0.1842 (best 0.1791, 3/5 evaluations without improvement)
+```
+
+Every time the loss improves the weights are saved to `./checkpoints/ocr/best/`, separately from the
+periodic `epoch-<N>` checkpoints — those hold the latest state, which after the model starts
+overfitting is worse than the best one. `./checkpoints/ocr/best/` is therefore what
+`evaluation_ocr.py` should be pointed at.
+
+When the run stops early a checkpoint is written unconditionally as well, so the final state is not
+lost if it falls between two `SAVE_EPOCH` boundaries.
+
+`best_validation_loss` and `evaluations_without_improvement` are part of `training_state.pt`, so
+`--resume` picks the patience counter back up instead of restarting it. Checkpoints written before
+this existed carry neither key and start the counter over.
+
+## Seeding
+
+Implemented in `object_detection_ocr_ft.py`.
+
+`set_seed(SEED)` seeds `random`, `numpy` and `torch` (CPU and all CUDA devices) before anything
+random happens, so weight initialisation, dropout and the shuffling order repeat across runs of the
+same config.
+
+`DataLoader(shuffle=True)` draws its sampler seed from the global torch RNG, so seeding that single
+stream is enough to fix the epoch order — and it is the same stream `--resume` restores from the
+checkpoint. The seeding call runs before the resume path, so when a checkpoint is given its RNG state
+takes over.
+
 ## Configuration
 
 Key parameters can be modified in `configs/object_detection_config.py`:
@@ -143,3 +279,12 @@ Key parameters can be modified in `configs/object_detection_config.py`:
 - SAVE_EPOCH — how often a checkpoint is written, in epochs
 - MODEL_ID
 - DATASET_ID
+
+`configs/object_detection_ocr_config.py` holds the same keys for the OCR run, plus:
+- PROMPT — `Detect license plate and read its number.`
+- SEED — 42
+- EVAL_EPOCH — how often the validation loss is computed, in epochs
+- EARLY_STOPPING_PATIENCE — evaluations without improvement before the run stops
+- EARLY_STOPPING_MIN_DELTA — how much the loss has to drop to count as an improvement
+
+With early stopping enabled, `EPOCHS` acts as an upper bound rather than the length of the run.
