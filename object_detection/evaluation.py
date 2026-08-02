@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader
 from transformers import AutoProcessor, PaliGemmaForConditionalGeneration
 from datasets import load_dataset
 from configs import object_detection_config
+import time
 
 from paligemma_ft.data_utis import collate_fn
 from functools import partial
@@ -287,7 +288,8 @@ if __name__ == "__main__":
         os.makedirs(args.output_dir, exist_ok=True)
 
     # get the device
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    # device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    device = "cpu"
 
     # load the test dataset
     print(f"[INFO] loading {object_detection_config.DATASET_ID} from hub...")
@@ -345,6 +347,9 @@ if __name__ == "__main__":
         gt_detection_strings = batch.pop("label_for_paligemma")
         batch.pop("labels", None)
         prompt_length = batch["input_ids"].shape[1]
+        
+        torch.cuda.synchronize() if device.startswith("cuda") else None
+        start_time = time.perf_counter()
         with torch.inference_mode():
             generated_outputs = model.generate(
                 **batch,
@@ -353,6 +358,12 @@ if __name__ == "__main__":
                 return_dict_in_generate=True,
                 output_scores=True,
             )
+        torch.cuda.synchronize() if device.startswith("cuda") else None
+        inference_time = time.perf_counter() - start_time
+        
+        print(f"Batch inference: {inference_time:.3f} sec")
+        print(f"Per image: {inference_time/object_detection_config.BATCH_SIZE:.3f} sec/image")
+
         confidences = sequence_confidence(
             model,
             generated_outputs,
