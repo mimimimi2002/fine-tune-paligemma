@@ -33,16 +33,15 @@ def convert_to_detection_string(bboxs, image_width, image_height, image=None):
     detection_strings = []
     for bbox in bboxs:
         x1, y1, x2, y2 = coco_to_xyxy(bbox)
-        name = "plate"
         locs = [
             format_location(y1, image_height),
             format_location(x1, image_width),
             format_location(y2, image_height),
             format_location(x2, image_width),
         ]
-        detection_string = "".join(locs) + f" {name}"
-        detection_strings.append(detection_string)
 
+        # one detection string per box: the bare "plate" label is only used when
+        # the OCR could not read anything inside the box
         name = "plate"
         if image is not None:
             plate_number = read_plate_number(image, (x1, y1, x2, y2))
