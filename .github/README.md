@@ -375,6 +375,7 @@ Ground truth caveat: the reference plate numbers come from PaddleOCR, not from a
 `label_accuracy` measures agreement with PaddleOCR rather than with the true plate.
 
 ### Example test image
+<img width="425" height="431" alt="00000" src="https://github.com/user-attachments/assets/50c2c236-056a-430d-9550-9555dbddba22" />
 
 
 ## Citation
