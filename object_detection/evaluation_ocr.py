@@ -288,7 +288,8 @@ if __name__ == "__main__":
         os.makedirs(args.output_dir, exist_ok=True)
 
     # get the device
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    # device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    device = "cpu"
 
     # load the test dataset
     print(f"[INFO] loading {object_detection_ocr_config.DATASET_ID} from hub...")
@@ -361,7 +362,7 @@ if __name__ == "__main__":
         inference_time = time.perf_counter() - start_time
         
         print(f"Batch inference: {inference_time:.3f} sec")
-        print(f"Per image: {inference_time/batch_size:.3f} sec/image")
+        print(f"Per image: {inference_time/object_detection_ocr_config.BATCH_SIZE:.3f} sec/image")
 
         confidences = sequence_confidence(
             model,
