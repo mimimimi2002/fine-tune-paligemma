@@ -28,6 +28,45 @@ def model_inputs(batch, keep_labels=True):
     return {key: value for key, value in batch.items() if key not in drop}
 
 
+def evaluate_loss(model, dataloader):
+    """mean loss over the dataloader, weighted by the number of samples per batch"""
+    was_training = model.training
+    model.eval()
+
+    total_loss = 0.0
+    total_samples = 0
+    with torch.inference_mode():
+        for batch in dataloader:
+            outputs = model(**model_inputs(batch))
+            batch_size = batch["input_ids"].shape[0]
+            total_loss += outputs.loss.item() * batch_size
+            total_samples += batch_size
+
+    model.train(was_training)
+    return total_loss / total_samples if total_samples else float("nan")
+
+
+def save_checkpoint(save_dir, model, processor, optimizer, epoch, early_stopping_state):
+    os.makedirs(save_dir, exist_ok=True)
+
+    model.save_pretrained(save_dir)
+    processor.save_pretrained(save_dir)
+
+    torch.save(
+        {
+            "epoch": epoch,
+            "optimizer": optimizer.state_dict(),
+            "cpu_rng_state": torch.get_rng_state(),
+            "cuda_rng_state": (
+                torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+            ),
+            **early_stopping_state,
+        },
+        os.path.join(save_dir, "training_state.pt"),
+    )
+    print(f"[INFO] checkpoint written to {save_dir}")
+
+
 def extract_objects(detection_string, image_width, image_height, unique_labels=False):
     objects = []
     seen_labels = set()
@@ -130,8 +169,14 @@ if __name__ == "__main__":
     # load the dataset
     print(f"[INFO] loading {object_detection_ocr_config.DATASET_ID} from hub...")
     train_dataset = load_dataset(object_detection_ocr_config.DATASET_ID, split="train")
+    # the validation split drives early stopping, the test split is only used for the
+    # before / after sample generation
+    validation_dataset = load_dataset(
+        object_detection_ocr_config.DATASET_ID, split="validation"
+    )
     test_dataset = load_dataset(object_detection_ocr_config.DATASET_ID, split="test")
     print(f"[INFO] {len(train_dataset)=}")
+    print(f"[INFO] {len(validation_dataset)=}")
     print(f"[INFO] {len(test_dataset)=}")
 
     # get the processor
@@ -158,6 +203,22 @@ if __name__ == "__main__":
         ),
         batch_size=object_detection_ocr_config.BATCH_SIZE,
         shuffle=True,
+    )
+    # train=True so that the suffix is tokenized into `labels` and the validation
+    # loss can be computed the same way as the training loss
+    validation_dataloader = DataLoader(
+        validation_dataset,
+        collate_fn=partial(
+            collate_fn,
+            image_title="image",
+            prompt=object_detection_ocr_config.PROMPT,
+            suffix_title="label_for_paligemma",
+            processor=processor,
+            device=device,
+            train=True,
+        ),
+        batch_size=object_detection_ocr_config.BATCH_SIZE,
+        shuffle=False,
     )
     test_dataloader = DataLoader(
         test_dataset,
@@ -200,6 +261,8 @@ if __name__ == "__main__":
         model.parameters(), lr=object_detection_ocr_config.LEARNING_RATE
     )
     start_epoch = 0
+    best_validation_loss = float("inf")
+    evaluations_without_improvement = 0
 
     if args.resume:
         checkpoint = torch.load(
@@ -214,6 +277,12 @@ if __name__ == "__main__":
                 if torch.is_tensor(v):
                     state[k] = v.to(device)
         start_epoch = checkpoint["epoch"]
+        # a checkpoint written before early stopping existed carries neither key,
+        # in that case the patience counter simply starts over
+        best_validation_loss = checkpoint.get("best_validation_loss", float("inf"))
+        evaluations_without_improvement = checkpoint.get(
+            "evaluations_without_improvement", 0
+        )
         print(f"Resume from epoch {start_epoch}")
 
     # run model generation before fine tuning only if not resuming from a checkpoint
@@ -238,6 +307,9 @@ if __name__ == "__main__":
                 else:
                     print("[WARN] skipping the CUDA RNG state, the device count changed")
 
+    model.train()
+    stop_early = False
+
     for epoch in range(start_epoch, object_detection_ocr_config.EPOCHS):
         for idx, batch in enumerate(train_dataloader):
             outputs = model(**model_inputs(batch))
@@ -249,26 +321,76 @@ if __name__ == "__main__":
             optimizer.step()
             optimizer.zero_grad()
 
-        if (epoch + 1) % object_detection_ocr_config.SAVE_EPOCH == 0:
-            save_dir = f"./checkpoints/ocr/epoch-{epoch+1}"
-            os.makedirs(save_dir, exist_ok=True)
+        early_stopping_state = dict(
+            best_validation_loss=best_validation_loss,
+            evaluations_without_improvement=evaluations_without_improvement,
+        )
 
-            model.save_pretrained(save_dir)
-            processor.save_pretrained(save_dir)
-
-            torch.save(
-                {
-                    "epoch": epoch + 1,
-                    "optimizer": optimizer.state_dict(),
-                    "cpu_rng_state": torch.get_rng_state(),
-                    "cuda_rng_state": (
-                        torch.cuda.get_rng_state_all()
-                        if torch.cuda.is_available()
-                        else None
-                    ),
-                },
-                os.path.join(save_dir, "training_state.pt")
+        if (epoch + 1) % object_detection_ocr_config.EVAL_EPOCH == 0:
+            validation_loss = evaluate_loss(model, validation_dataloader)
+            improved = (
+                validation_loss
+                < best_validation_loss
+                - object_detection_ocr_config.EARLY_STOPPING_MIN_DELTA
             )
+
+            if improved:
+                best_validation_loss = validation_loss
+                evaluations_without_improvement = 0
+            else:
+                evaluations_without_improvement += 1
+
+            early_stopping_state = dict(
+                best_validation_loss=best_validation_loss,
+                evaluations_without_improvement=evaluations_without_improvement,
+            )
+            print(
+                f"Epoch: {epoch} Validation loss: {validation_loss:.4f} "
+                f"(best {best_validation_loss:.4f}, "
+                f"{evaluations_without_improvement}/"
+                f"{object_detection_ocr_config.EARLY_STOPPING_PATIENCE} "
+                f"evaluations without improvement)"
+            )
+
+            # the best weights are kept separately, the periodic checkpoints below
+            # are overwritten by later, possibly worse, epochs
+            if improved:
+                save_checkpoint(
+                    "./checkpoints/ocr/best",
+                    model,
+                    processor,
+                    optimizer,
+                    epoch + 1,
+                    early_stopping_state,
+                )
+
+            if (
+                evaluations_without_improvement
+                >= object_detection_ocr_config.EARLY_STOPPING_PATIENCE
+            ):
+                print(
+                    f"[INFO] early stopping at epoch {epoch}: the validation loss did "
+                    f"not improve for {evaluations_without_improvement} evaluations"
+                )
+                stop_early = True
+
+        # always keep the last state when stopping early, otherwise the run would
+        # end on an epoch that was never written to disk
+        if (epoch + 1) % object_detection_ocr_config.SAVE_EPOCH == 0 or stop_early:
+            save_checkpoint(
+                f"./checkpoints/ocr/epoch-{epoch+1}",
+                model,
+                processor,
+                optimizer,
+                epoch + 1,
+                early_stopping_state,
+            )
+
+        if stop_early:
+            break
+
+    print(f"[INFO] best validation loss: {best_validation_loss:.4f}")
+    print("[INFO] the best weights are in ./checkpoints/ocr/best")
 
     # run model generation after fine tuning
     infer_on_model(model, test_batch, before_pt=False)
