@@ -1,3 +1,4 @@
+import random
 import re
 import numpy as np
 import torch
@@ -26,6 +27,17 @@ def model_inputs(batch, keep_labels=True):
     if not keep_labels:
         drop.add("labels")
     return {key: value for key, value in batch.items() if key not in drop}
+
+
+def set_seed(seed):
+    """seed every RNG the run draws from. `DataLoader(shuffle=True)` seeds its own
+    sampler from the global torch RNG, so seeding that stream is enough to make the
+    shuffling order reproducible (and it is what --resume restores)."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 def evaluate_loss(model, dataloader):
@@ -165,6 +177,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
     # get the device
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+    # seed before anything random happens; when resuming, the RNG state saved in the
+    # checkpoint is restored further down and takes over from here
+    print(f"[INFO] seeding with {object_detection_ocr_config.SEED}...")
+    set_seed(object_detection_ocr_config.SEED)
 
     # load the dataset
     print(f"[INFO] loading {object_detection_ocr_config.DATASET_ID} from hub...")

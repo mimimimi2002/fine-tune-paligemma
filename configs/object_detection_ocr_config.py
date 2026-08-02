@@ -8,6 +8,7 @@ MODEL_DTYPE = torch.bfloat16
 MODEL_REVISION = "bfloat16"
 EPOCHS = 100
 SAVE_EPOCH = 10
+SEED = 42
 PROMPT = "Detect license plate and read its number."
 
 # early stopping: the validation loss is computed every EVAL_EPOCH epochs and the
