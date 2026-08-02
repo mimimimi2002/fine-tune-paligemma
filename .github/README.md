@@ -15,6 +15,31 @@ seeding and a full evaluation suite were added.
 PaliGemma (PG) is a family of Vision Language Models from Google. It uses
 SigLIP as the vision encoder, and the Gemma family of models as its language counterpart.
 
+## Contents
+
+- [TODO](#todo)
+- [Pretrained Model](#pretrained-model)
+- [Usage](#usage)
+  - [Set up env](#set-up-env)
+  - [Run script](#run-script)
+- [Changes in this fork](#changes-in-this-fork)
+  - [Dataset](#dataset)
+  - [OCR dataset](#ocr-dataset)
+  - [`<image>` token in the prompt](#image-token-in-the-prompt)
+  - [Checkpoint saving](#checkpoint-saving)
+  - [Resuming training](#resuming-training)
+  - [OCR fine tuning](#ocr-fine-tuning)
+  - [Early stopping and best checkpoint](#early-stopping-and-best-checkpoint)
+  - [Fixed seed](#fixed-seed)
+  - [Inference time](#inference-time)
+- [Training](#training)
+  - [Configuration](#configuration)
+  - [Training process](#training-process)
+  - [Evaluation](#evaluation)
+  - [OCR evaluation](#ocr-evaluation)
+  - [Test image](#test-image)
+- [Citation](#citation)
+
 ## TODO
 
 - [x] **Dataset** — rebuild the license plate dataset and push it to our own Hugging Face account

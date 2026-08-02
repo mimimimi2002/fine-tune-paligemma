@@ -2,6 +2,21 @@
 
 This folder contains code for creating dataset and fine-tuning the PaliGemma vision-language model for license plate detection.
 
+## Contents
+
+- [Overview](#overview)
+- [Dataset](#dataset)
+  - [OCR dataset](#ocr-dataset)
+- [Usage](#usage)
+- [Evaluation](#evaluation)
+  - [Metrics](#metrics)
+    - [On the OCR dataset](#on-the-ocr-dataset)
+  - [Results](#results)
+- [Checkpoints and resuming](#checkpoints-and-resuming)
+- [Early stopping and best checkpoint](#early-stopping-and-best-checkpoint)
+- [Seeding](#seeding)
+- [Configuration](#configuration)
+
 ## Overview
 
 Two variants of the task are implemented, each with its own dataset builder, training script and
