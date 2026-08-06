@@ -165,8 +165,20 @@ instead of the upstream copy.
 prompt = ["<image> " + prompt for _ in examples]
 ```
 
-Recent versions of `transformers` expect the image token to be present in the text explicitly
-rather than inserting it inside the processor.
+That is **one** placeholder, not 256 of them. The processor does the expansion: it replaces the
+single `<image>` with `<image>` × `image_seq_length` (256 for the 224px model), inserts `<bos>` right
+after the run of image tokens and appends `\n`, so what actually reaches the tokenizer is
+
+```
+<image><image>...<image><bos> Detect license plate.\n
+└───── 256 ─────┘
+```
+
+The processor also works without the placeholder — it infers one and prepends it — but that path
+logs a warning through `logger.warning` rather than `logger.warning_once`, so the message repeats on
+every batch for the whole run. Passing it explicitly keeps the logs readable, and is the only form
+that extends to more than one image per sample, since the number of `<image>` tokens in the text is
+what tells the processor how many images the sample has.
 
 #### Checkpoint saving
 
