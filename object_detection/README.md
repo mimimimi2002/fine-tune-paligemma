@@ -50,6 +50,11 @@ The project uses the license plate detection dataset from Hugging Face Hub:
 `create_od_dataset.py` converts the COCO format annotations into the `<locYYYY>` detection string
 format PaliGemma is trained on, and pushes the result to the Hub.
 
+The source is the Vehicle Registration Plates Dataset, licensed under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Both processed datasets are derivatives of
+it — the images are unchanged, only the annotations are reformatted (and extended with plate numbers
+for the OCR variant) — so the same attribution applies to them.
+
 ### OCR dataset
 
 `create_od_ocr_dataset.py` does the same conversion and additionally reads the plate number, so that

@@ -388,6 +388,11 @@ computed.
 #### Example test image
 <img width="425" height="431" alt="00001" src="https://github.com/user-attachments/assets/5029a0ee-4322-4dec-9aa1-934a05b8536b" />
 
+<sub>Example image from the Vehicle Registration Plates Dataset
+([`keremberke/license-plate-object-detection`](https://huggingface.co/datasets/keremberke/license-plate-object-detection)),
+licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The red and green boxes are
+drawn by `evaluation.py`.</sub>
+
 ### Detection + OCR
 
 #### Configuration
@@ -426,6 +431,11 @@ Ground truth caveat: the reference plate numbers come from PaddleOCR, not from a
 #### Example test image
 <img width="425" height="431" alt="00000" src="https://github.com/user-attachments/assets/50c2c236-056a-430d-9550-9555dbddba22" />
 
+<sub>Example image from the Vehicle Registration Plates Dataset
+([`keremberke/license-plate-object-detection`](https://huggingface.co/datasets/keremberke/license-plate-object-detection)),
+licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The red and green boxes are
+drawn by `evaluation_ocr.py`.</sub>
+
 
 ## Citation
 
@@ -440,3 +450,14 @@ This is a fork. If you like the original work and would use it please cite the u
   year = {2024}  
 }
 ```
+
+The images and bounding boxes come from the Vehicle Registration Plates Dataset
+([`keremberke/license-plate-object-detection`](https://huggingface.co/datasets/keremberke/license-plate-object-detection)),
+licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The two datasets published
+from this fork —
+[`mimimimi2002/license-detection-paligemma`](https://huggingface.co/datasets/mimimimi2002/license-detection-paligemma)
+and
+[`mimimimi2002/license-detection-paligemma-ocr`](https://huggingface.co/datasets/mimimimi2002/license-detection-paligemma-ocr)
+— are derivatives of it: the images are unchanged, the annotations are reformatted into PaliGemma
+detection strings, and the OCR variant adds plate numbers read with PaddleOCR. The attribution above
+applies to them as well.
